@@ -1350,7 +1350,8 @@ static char *new_game_desc(game_params *params, random_state *rs,
 
     ngen = new_clues(params, rs, clues, grid);
 
-    debug(("%d %dx%d loops before finished puzzle.\n", ngen, w, h));
+    if (ngen || 1) 
+        debug(("%d %dx%d loops before finished puzzle.\n", ngen, w, h));
 
     desc = snewn(w * h + 1, char);
     for (i = j = 0; i < w*h; i++) {
