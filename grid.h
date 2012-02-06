@@ -106,7 +106,8 @@ typedef struct grid {
   A(DODECAGONAL,dodecagonal) \
   A(GREATDODECAGONAL,greatdodecagonal) \
   A(PENROSE_P2,penrose_p2_kite) \
-  A(PENROSE_P3,penrose_p3_thick)
+  A(PENROSE_P3,penrose_p3_thick) \
+  A(DELAUNAY,delaunay)
 
 #define ENUM(upper,lower) GRID_ ## upper,
 typedef enum grid_type { GRIDGEN_LIST(ENUM) GRID_TYPE_MAX } grid_type;

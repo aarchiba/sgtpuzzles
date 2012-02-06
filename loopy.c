@@ -258,6 +258,7 @@ static void check_caches(const solver_state* sstate);
     A(Great-Dodecagonal,GRID_GREATDODECAGONAL,2,2) \
     A(Penrose (kite/dart),GRID_PENROSE_P2,3,3) \
     A(Penrose (rhombs),GRID_PENROSE_P3,3,3) \
+    A(Delaunay,GRID_DELAUNAY,3,3) \
 
 #define GRID_NAME(title,type,amin,omin) #title,
 #define GRID_CONFIG(title,type,amin,omin) ":" #title

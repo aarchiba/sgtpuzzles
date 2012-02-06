@@ -88,6 +88,75 @@ static double point_line_distance(long px, long py,
     return det / len;
 }
 
+/* Determine whether points a, b, c are oriented
+ * clockwise or anticlockwise. Returns positive
+ * if yes, negative if no, and zero if they're collinear
+ */
+static long anticlockwise(long ax, long ay,
+                      long bx, long by,
+                      long cx, long cy)
+{
+    return bx*cy - cx*by + cx*ay - ax*cy + ax*by - bx*ay;
+}
+
+/* Determine whether d is in the triangle a, b, c
+ * Assumes a, b, c is oriented anticlockwise
+ */
+static int in_triangle(long ax, long ay,
+                       long bx, long by,
+                       long cx, long cy,
+                       long dx, long dy) 
+{
+    assert(anticlockwise(ax,ay,bx,by,cx,cy));
+    return anticlockwise(ax,ay,bx,by,dx,dy)>0 &&
+           anticlockwise(bx,by,cx,cy,dx,dy)>0 &&
+           anticlockwise(cx,cy,ax,ay,dx,dy)>0;
+}
+
+/* Determine whether d is in the circumcircle of points a, b, and c
+ * Requires a, b, and c to be in counterclockwise order
+ * Returns a positive number iff the result is true.
+ *
+ * Warning: keep all coordinates smaller than the cube root
+ * of MAXINT (fourth root?)
+ */
+static int in_circumcircle(long ax, long ay,
+                            long bx, long by,
+                            long cx, long cy,
+                            long dx, long dy) 
+{
+    long a[3][3];
+    a[0][0] = ax-dx;
+    a[0][1] = ay-dy; 
+    a[0][2] = (ax-dx)*(ax-dx)+(ay-dy)*(ay-dy);
+
+    a[1][0] = bx-dx;
+    a[1][1] = by-dy; 
+    a[1][2] = (bx-dx)*(bx-dx)+(by-dy)*(by-dy);
+
+    a[2][0] = cx-dx;
+    a[2][1] = cy-dy; 
+    a[2][2] = (cx-dx)*(cx-dx)+(cy-dy)*(cy-dy);
+
+    return (a[0][0]*(a[1][1]*a[2][2]-a[2][1]*a[1][2])
+            -a[1][0]*(a[0][1]*a[2][2]-a[2][1]*a[0][2])
+            +a[2][0]*(a[0][1]*a[1][2]-a[1][1]*a[0][2]))>0;
+}
+
+/* Use subrandom sequences for point poisitions */
+static double subrandom(long base, long n)
+{
+    double r=0;
+    double b=1;
+    while (n>0) 
+    {
+        b /= base;
+        r += (n%base) * b;
+        n /= base;
+    }
+    return r;
+}
+
 /* Determine nearest edge to where the user clicked.
  * (x, y) is the clicked location, converted to grid coordinates.
  * Returns the nearest edge, or NULL if no edge is reasonably
@@ -2762,6 +2831,139 @@ static grid *grid_new_penrose_p3_thick(int width, int height, char *desc)
 {
     return grid_new_penrose(width, height, PENROSE_P3, desc);
 }
+
+
+/* Delaunay grids */
+
+/* Choose a tilesize so that our integer coordinates are
+ * small enough to survive cubing within 32 bits */
+static int delaunay_tilesize(int width, int height)
+{
+    int m=width;
+    if (height>m) m=height;
+    return 200/m;
+}
+
+static void grid_size_delaunay(int width, int height,
+                      int *tilesize, int *xextent, int *yextent)
+{
+    int a = delaunay_tilesize(width, height);
+
+    *tilesize = a;
+    *xextent = width * a;
+    *yextent = height * a;
+}
+
+static grid *grid_new_delaunay(int width, int height, char *desc)
+{
+    int i, j;
+    long *xs;
+    long *ys;
+    int *faces;
+    int num_faces = 0;
+    int num_dots = 0;
+    grid *g;
+
+    /* Side length */
+    int a = delaunay_tilesize(width, height);
+
+    /* Upper bounds - don't have to be exact */
+    int max_dots = width * height;
+    int max_faces = 3*max_dots;
+
+    tree234 *points;
+
+    xs = snewn(max_dots, long);
+    ys = snewn(max_dots, long);
+    faces = snewn(3*max_faces, int);
+
+    /* Start with the outer rectangle; this is always a Delaunay
+     * triangulation, and all later points will be within some
+     * existing triangle
+     */
+    xs[0] = 0;
+    ys[0] = 0;
+    xs[1] = a*width*1;
+    ys[1] = 0;
+    xs[2] = a*width*1;
+    ys[2] = a*height*1;
+    xs[3] = 0;
+    ys[3] = a*height*1;
+    faces[3*0 + 0] = 0;
+    faces[3*0 + 1] = 1;
+    faces[3*0 + 2] = 3;
+    faces[3*1 + 0] = 1;
+    faces[3*1 + 1] = 2;
+    faces[3*1 + 2] = 3;
+
+    num_dots = 4;
+    num_faces = 2;
+
+    for (i=1; num_dots<max_dots; i++) {
+        xs[num_dots] = (int)(a*width*subrandom(2,i));
+        ys[num_dots] = (int)(a*height*subrandom(3,i));
+        
+        for (j=0;j<num_faces;j++) {
+            if (in_triangle(xs[faces[3*j+0]], ys[faces[3*j+0]],
+                            xs[faces[3*j+1]], ys[faces[3*j+1]],
+                            xs[faces[3*j+2]], ys[faces[3*j+2]],
+                            xs[num_dots], ys[num_dots])) {
+                /* Found the triangle that contains the new dot */
+                /* Add two new triangles */
+                faces[3*num_faces+0] = faces[3*j+0];
+                faces[3*num_faces+1] = faces[3*j+1];
+                faces[3*num_faces+2] = num_dots;
+                num_faces++;
+
+                faces[3*num_faces+0] = faces[3*j+0];
+                faces[3*num_faces+1] = num_dots;
+                faces[3*num_faces+2] = faces[3*j+2];
+                num_faces++;
+
+                /* Replace the old triangle with a new one sharing two
+                 * corners
+                 */
+                faces[3*j+0] = num_dots;
+
+                num_dots++;
+                break;
+            }
+        }
+        /* If no triangle contained the new dot, then it was
+         * collinear with an existing segment, or something else
+         * weird happened. So we simply reject this dot and don't
+         * increment num_dots.
+         */
+    }
+    in_circumcircle(0,0,0,0,0,0,0,0);
+    /* Now we have a probably-not-Delaunay triangulation */
+
+    g = grid_empty();
+    g->tilesize = a;
+    g->faces = snewn(max_faces, grid_face);
+    g->dots = snewn(max_dots, grid_dot);
+
+    points = newtree234(grid_point_cmp_fn);
+
+    /* generate square faces */
+    for (i=0; i<num_faces; i++) {
+        grid_dot *d;
+
+        grid_face_add_new(g, 3);
+        for (j=0;j<3;j++) {
+            d = grid_get_dot(g, points, xs[faces[3*i+j]], ys[faces[3*i+j]]);
+            grid_face_set_dot(g, d, j);
+        }
+    }
+
+    freetree234(points);
+    assert(g->num_faces <= max_faces);
+    assert(g->num_dots <= max_dots);
+
+    grid_make_consistent(g);
+    return g;
+}
+
 
 /* ----------- End of grid generators ------------- */
 
