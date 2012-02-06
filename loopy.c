@@ -509,6 +509,7 @@ static const game_params presets[] = {
     {  3,  3, DIFF_HARD, 10, 0 },
     {  6,  6, DIFF_HARD, 11, 0 },
     {  6,  6, DIFF_HARD, 12, 0 },
+    {  3, 3, DIFF_HARD, 13, 0 }
 #else
     {  7,  7, DIFF_EASY, 0, 0 },
     {  10,  10, DIFF_EASY, 0, 0 },
@@ -528,7 +529,8 @@ static const game_params presets[] = {
     {  5,  4, DIFF_HARD, 9, 0 },
     {  5,  4, DIFF_HARD, 10, 0 },
     {  10, 10, DIFF_HARD, 11, 0 },
-    {  10, 10, DIFF_HARD, 12, 0 }
+    {  10, 10, DIFF_HARD, 12, 0 },
+    {  5, 5, DIFF_HARD, 13, 0 }
 #endif
 };
 

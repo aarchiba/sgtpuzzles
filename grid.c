@@ -2857,108 +2857,102 @@ static void grid_size_delaunay(int width, int height,
 static grid *grid_new_delaunay(int width, int height, char *desc)
 {
     int i, j;
-    long *xs;
-    long *ys;
-    int *faces;
-    int num_faces = 0;
-    int num_dots = 0;
-    grid *g;
+    grid *g = grid_empty();
 
     /* Side length */
     int a = delaunay_tilesize(width, height);
 
     /* Upper bounds - don't have to be exact */
     int max_dots = width * height;
-    int max_faces = 3*max_dots;
+    int max_faces = 2*max_dots-6;
 
-    tree234 *points;
+    assert(max_dots>3);
 
-    xs = snewn(max_dots, long);
-    ys = snewn(max_dots, long);
-    faces = snewn(3*max_faces, int);
+    g->tilesize = a;
+    g->faces = snewn(max_faces, grid_face);
+    g->dots = snewn(max_dots, grid_dot);
 
     /* Start with the outer rectangle; this is always a Delaunay
      * triangulation, and all later points will be within some
      * existing triangle
      */
-    xs[0] = 0;
-    ys[0] = 0;
-    xs[1] = a*width*1;
-    ys[1] = 0;
-    xs[2] = a*width*1;
-    ys[2] = a*height*1;
-    xs[3] = 0;
-    ys[3] = a*height*1;
-    faces[3*0 + 0] = 0;
-    faces[3*0 + 1] = 1;
-    faces[3*0 + 2] = 3;
-    faces[3*1 + 0] = 1;
-    faces[3*1 + 1] = 2;
-    faces[3*1 + 2] = 3;
+    g->dots[0].x = 0;
+    g->dots[0].y = 0;
+    g->dots[1].x = a*width*1;
+    g->dots[1].y = 0;
+    g->dots[2].x = a*width*1;
+    g->dots[2].y = a*height*1;
+    g->dots[3].x = 0;
+    g->dots[3].y = a*height*1;
 
-    num_dots = 4;
-    num_faces = 2;
+    g->faces[0].order = 3;
+    g->faces[0].dots = snewn(3,grid_dot*);
+    g->faces[0].dots[0] = &g->dots[0];
+    g->faces[0].dots[1] = &g->dots[1];
+    g->faces[0].dots[2] = &g->dots[3];
+    g->faces[1].order = 3;
+    g->faces[1].dots = snewn(3,grid_dot*);
+    g->faces[1].dots[0] = &g->dots[1];
+    g->faces[1].dots[1] = &g->dots[2];
+    g->faces[1].dots[2] = &g->dots[3];
 
-    for (i=1; num_dots<max_dots; i++) {
-        xs[num_dots] = (int)(a*width*subrandom(2,i));
-        ys[num_dots] = (int)(a*height*subrandom(3,i));
+    g->num_dots = 4;
+    g->num_faces = 2;
+
+    /* FIXME: convert to using grid data structures to allow easy navigation */
+    for (i=1; g->num_dots<max_dots; i++) {
+        int x = (int)(a*width*subrandom(2,i));
+        int y = (int)(a*height*subrandom(3,i));
         
-        for (j=0;j<num_faces;j++) {
-            if (in_triangle(xs[faces[3*j+0]], ys[faces[3*j+0]],
-                            xs[faces[3*j+1]], ys[faces[3*j+1]],
-                            xs[faces[3*j+2]], ys[faces[3*j+2]],
-                            xs[num_dots], ys[num_dots])) {
+        for (j=0;j<g->num_faces;j++) {
+            grid_face*f = &g->faces[j];
+            if (in_triangle(f->dots[0]->x, f->dots[0]->y,
+                            f->dots[1]->x, f->dots[1]->y,
+                            f->dots[2]->x, f->dots[2]->y,
+                            x, y)) {
                 /* Found the triangle that contains the new dot */
-                /* Add two new triangles */
-                faces[3*num_faces+0] = faces[3*j+0];
-                faces[3*num_faces+1] = faces[3*j+1];
-                faces[3*num_faces+2] = num_dots;
-                num_faces++;
 
-                faces[3*num_faces+0] = faces[3*j+0];
-                faces[3*num_faces+1] = num_dots;
-                faces[3*num_faces+2] = faces[3*j+2];
-                num_faces++;
+                grid_dot *d = &g->dots[g->num_dots++];
+                grid_face *f1 = &g->faces[g->num_faces++];
+                grid_face *f2 = &g->faces[g->num_faces++];
+
+                d->x = x;
+                d->y = y;
+
+                f1->order = 3;
+                f2->order = 3;
+                f1->dots = snewn(3,grid_dot*);
+                f2->dots = snewn(3,grid_dot*);
+
+                /* Add two new triangles */
+                f1->dots[0] = f->dots[0];
+                f1->dots[1] = f->dots[1];
+                f1->dots[2] = d;
+
+                f2->dots[0] = f->dots[0];
+                f2->dots[1] = d;
+                f2->dots[2] = f->dots[2];
 
                 /* Replace the old triangle with a new one sharing two
                  * corners
                  */
-                faces[3*j+0] = num_dots;
+                f->dots[0] = d;
 
-                num_dots++;
                 break;
             }
         }
+        in_circumcircle(0,0,0,0,0,0,0,0);
         /* If no triangle contained the new dot, then it was
          * collinear with an existing segment, or something else
          * weird happened. So we simply reject this dot and don't
          * increment num_dots.
          */
+
     }
-    in_circumcircle(0,0,0,0,0,0,0,0);
     /* Now we have a probably-not-Delaunay triangulation */
 
-    g = grid_empty();
-    g->tilesize = a;
-    g->faces = snewn(max_faces, grid_face);
-    g->dots = snewn(max_dots, grid_dot);
-
-    points = newtree234(grid_point_cmp_fn);
-
-    /* generate square faces */
-    for (i=0; i<num_faces; i++) {
-        grid_dot *d;
-
-        grid_face_add_new(g, 3);
-        for (j=0;j<3;j++) {
-            d = grid_get_dot(g, points, xs[faces[3*i+j]], ys[faces[3*i+j]]);
-            grid_face_set_dot(g, d, j);
-        }
-    }
-
-    freetree234(points);
-    assert(g->num_faces <= max_faces);
-    assert(g->num_dots <= max_dots);
+    assert(g->num_faces == max_faces);
+    assert(g->num_dots == max_dots);
 
     grid_make_consistent(g);
     return g;
