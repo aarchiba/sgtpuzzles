@@ -3013,6 +3013,7 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
 {
     int i, j;
     grid *g = grid_empty();
+    grid *g1;
     tree234 *queue = newtree234(grid_edge_bydots_cmpfn);
     grid_face *oldfaces;
     int oldnumfaces;
@@ -3021,7 +3022,7 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
     int a = delaunay_tilesize(width, height);
 
     /* Upper bounds - don't have to be exact */
-    int max_dots = width * height + 4;
+    int max_dots = width * height + 14;
     int max_faces = 2*max_dots-6;
     int max_edges = 3*max_dots-7;
 
@@ -3184,7 +3185,11 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
     }
 
     grid_make_consistent(g);
-    return g;
+    g1 = grid_dual(g);
+    /* grid_free(g); */
+    /* g = grid_dual(g1); */
+    /* grid_free(g); */
+    return g1;
 }
 
 /* ----------- End of grid generators ------------- */
