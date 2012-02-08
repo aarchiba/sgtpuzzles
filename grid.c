@@ -2854,23 +2854,182 @@ static void grid_size_delaunay(int width, int height,
     *yextent = height * a;
 }
 
+/* Check whether the pair of triangles meeting along the edge
+ * satisfy the Delaunay criterion; if not, flip them. Return 1
+ * if anything needed to be done.
+ *
+ * Needs a grid in which all edges are correctly linked to their faces
+ * and vice versa. Does not update the lists of edges incident on dots.
+ *
+ */
+static int delaunay_flip_edge(grid*g, grid_edge*e)
+{
+    int i;
+    grid_dot *a, *b, *c, *d;
+    grid_edge *ab, *bc, *cd, *da;
+
+    /* Nothing to do if we border the infinite face */
+    if (!e->face1 || !e->face2) return 0;
+
+    a = e->dot1;
+    c = e->dot2;
+    for (i=0;i<3;i++) {
+        b = e->face1->dots[i];
+        if (b != a && b != c) break;
+    }
+    for (i=0;i<3;i++) {
+        d = e->face2->dots[i];
+        if (d != a && d != c) break;
+    }
+    assert (a!=b);
+    assert (a!=c);
+    assert (a!=d);
+    assert (b!=c);
+    assert (b!=d);
+    assert (c!=d);
+
+    /* Arrange ABCD anticlockwise and with AC as the edge */
+    /* Also, B is on e->face1 */
+    if (anticlockwise(a->x,a->y,
+                      b->x,b->y,
+                      c->x,c->y)<0) {
+        grid_dot *t;
+        grid_face *tf;
+        t=b; b=d; d=t;
+        tf=e->face1; e->face1=e->face2; e->face2=tf;
+    }
+
+    /* FIXME: make sure these really are in the right order */
+    assert(anticlockwise(a->x,a->y,
+                         b->x,b->y,
+                         c->x,c->y)>0);
+    assert(anticlockwise(a->x,a->y,
+                         c->x,c->y,
+                         d->x,d->y)>0);
+
+    /* Does the edge need to be flipped? */
+    if (!(in_circumcircle(a->x, a->y,
+                          b->x, b->y,
+                          c->x, c->y,
+                          d->x, d->y) &&
+          in_circumcircle(a->x, a->y,
+                          c->x, c->y,
+                          d->x, d->y,
+                          b->x, b->y)))
+        return 0;
+    /* If flipping is needed, then ABCD must be convex */
+    assert(anticlockwise(b->x,b->y,
+                         c->x,c->y,
+                         d->x,d->y)>0);
+    assert(anticlockwise(c->x,c->y,
+                         d->x,d->y,
+                         a->x,a->y)>0);
+
+    /* Make sure that the faces we're modifying are always face1 */
+    for (i=0;i<6;i++) {
+        grid_face *tf;
+        grid_edge *u;
+
+        if (i<3) u = e->face1->edges[i];
+        else u = e->face2->edges[i-3];
+
+        if (u!=e && (u->face2 == e->face1 || u->face2 == e->face2)) {
+            tf = u->face1;
+            u->face1 = u->face2;
+            u->face2 = tf;
+        }
+    }
+
+    /* Find named edges */
+    ab = (grid_edge*) 0;
+    bc = (grid_edge*) 0;
+    cd = (grid_edge*) 0;
+    da = (grid_edge*) 0;
+    for (i=0;i<6;i++) {
+        grid_edge *u;
+
+        if (i<3) u = e->face1->edges[i];
+        else u = e->face2->edges[i-3];
+
+        if ((a==u->dot1 && b==u->dot2) ||
+            (a==u->dot2 && b==u->dot1)) {
+           ab = u;
+        } else if ((b==u->dot1 && c==u->dot2) ||
+            (b==u->dot2 && c==u->dot1)) {
+           bc = u;
+        } else if ((c==u->dot1 && d==u->dot2) ||
+            (c==u->dot2 && d==u->dot1)) {
+           cd = u;
+        } else if ((d==u->dot1 && a==u->dot2) ||
+            (d==u->dot2 && a==u->dot1)) {
+           da = u;
+        } else if ((a==u->dot1 && c==u->dot2) ||
+            (a==u->dot2 && c==u->dot1)) {
+           assert(u==e);
+        } else {
+           assert(0);
+        }
+    }
+    assert(ab && bc && cd && da);
+
+    assert(ab->face1 == e->face1);
+    assert(bc->face1 == e->face1);
+    assert(cd->face1 == e->face2);
+    assert(da->face1 == e->face2);
+
+    /* Now rearrange the faces so BD is the edge */
+    e->dot1 = b;
+    e->dot2 = d;
+
+    /* Change which point goes where */
+    e->face1->dots[0] = a;
+    e->face1->dots[1] = b;
+    e->face1->dots[2] = d;
+
+    e->face2->dots[0] = b;
+    e->face2->dots[1] = c;
+    e->face2->dots[2] = d;
+
+    /* Change which edge goes where */
+    e->face1->edges[0] = ab;
+    e->face1->edges[1] = e;
+    e->face1->edges[2] = da;
+
+    e->face2->edges[0] = bc;
+    e->face2->edges[1] = cd;
+    e->face2->edges[2] = e;
+
+    /* Fix up which faces each edge borders */
+    ab->face1 = e->face1;
+    bc->face1 = e->face2;
+    cd->face1 = e->face2;
+    da->face1 = e->face1;
+
+    return 1;
+}
+
 static grid *grid_new_delaunay(int width, int height, char *desc)
 {
     int i, j;
     grid *g = grid_empty();
+    tree234 *queue = newtree234(grid_edge_bydots_cmpfn);
+    grid_face *oldfaces;
+    int oldnumfaces;
 
     /* Side length */
     int a = delaunay_tilesize(width, height);
 
     /* Upper bounds - don't have to be exact */
-    int max_dots = width * height;
+    int max_dots = width * height + 4;
     int max_faces = 2*max_dots-6;
+    int max_edges = 3*max_dots-7;
 
     assert(max_dots>3);
 
     g->tilesize = a;
-    g->faces = snewn(max_faces, grid_face);
-    g->dots = snewn(max_dots, grid_dot);
+    g->faces = snewn(max_faces+1, grid_face);
+    g->dots = snewn(max_dots+1, grid_dot);
+    g->edges = snewn(max_edges+1, grid_edge);
 
     /* Start with the outer rectangle; this is always a Delaunay
      * triangulation, and all later points will be within some
@@ -2903,7 +3062,7 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
     for (i=1; g->num_dots<max_dots; i++) {
         int x = (int)(a*width*subrandom(2,i));
         int y = (int)(a*height*subrandom(3,i));
-        
+
         for (j=0;j<g->num_faces;j++) {
             grid_face*f = &g->faces[j];
             if (in_triangle(f->dots[0]->x, f->dots[0]->y,
@@ -2941,7 +3100,6 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
                 break;
             }
         }
-        in_circumcircle(0,0,0,0,0,0,0,0);
         /* If no triangle contained the new dot, then it was
          * collinear with an existing segment, or something else
          * weird happened. So we simply reject this dot and don't
@@ -2955,9 +3113,78 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
     assert(g->num_dots == max_dots);
 
     grid_make_consistent(g);
+
+    for (i=0;i<g->num_edges;i++)
+        add234(queue, &g->edges[i]);
+    while (1) {
+        grid_edge *e = delpos234(queue,0);
+        if (!e) break;
+        if (delaunay_flip_edge(g,e)) {
+            for (i=0;i<3;i++) {
+                add234(queue, e->face1->edges[i]);
+                add234(queue, e->face2->edges[i]);
+            }
+            del234(queue,e);
+        }
+    }
+    freetree234(queue);
+
+    /* Strip edge and dot structures so we can rerun grid_make_consistent */
+    for (i=0; i<g->num_dots; i++) {
+        sfree(g->dots[i].edges);
+        g->dots[i].edges = NULL;
+        sfree(g->dots[i].faces);
+        g->dots[i].faces = NULL;
+    }
+    for (i=0; i<g->num_faces; i++) {
+        sfree(g->faces[i].edges);
+        g->faces[i].edges = NULL;
+        g->faces[i].has_incentre = 0;
+    }
+    sfree(g->edges);
+    g->edges = NULL;
+
+    if (1) {
+        /* Remove four corners */
+
+        /* Remove all faces touching a corner */
+        oldnumfaces = g->num_faces;
+        oldfaces = g->faces;
+
+        g->num_faces = 0;
+        g->faces = snewn(oldnumfaces, grid_face);
+        for (i=0; i<oldnumfaces; i++) {
+            int zap = 0;
+            for (j=0; j<oldfaces[i].order; j++) {
+                if (oldfaces[i].dots[j] - g->dots < 4) {
+                    zap = 1;
+                }
+            }
+            if (zap) {
+                sfree(oldfaces[i].dots);
+                oldfaces[i].dots = NULL;
+            } else {
+                g->faces[g->num_faces] = oldfaces[i];
+                g->num_faces++;
+            }
+        }
+        sfree(oldfaces);
+
+        /* Remove the corner dots */
+        g->num_dots -= 4;
+        for (i=0; i<g->num_dots; i++) {
+            g->dots[i] = g->dots[i+4];
+        }
+        for (i=0; i<g->num_faces; i++) {
+            for (j=0; j<g->faces[i].order; j++) {
+                g->faces[i].dots[j] -= 4;
+            }
+        }
+    }
+
+    grid_make_consistent(g);
     return g;
 }
-
 
 /* ----------- End of grid generators ------------- */
 
