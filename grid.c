@@ -1502,6 +1502,7 @@ static grid *grid_dual(grid *g)
 
     debug(("dual has %d faces and %d dots\n",
                 new_g->num_faces,new_g->num_dots));
+    grid_trim_vigorously(new_g);
     grid_make_consistent(new_g);
     return new_g;
 }
