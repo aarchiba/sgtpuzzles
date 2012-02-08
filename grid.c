@@ -1473,12 +1473,13 @@ static grid *grid_dual(grid *g)
 
         d = &(g->dots[i]);
 
+        /* Detect and remove faces bordering the exterior */
         order = d->order;
         for (j=0;j<d->order;j++)
         {
             if (!d->faces[j]) order--;
         }
-        if (order>2)
+        if (order==d->order)
         {
             grid_face_add_new(new_g, order);
             for (j=0,k=0;j<d->order;j++)
