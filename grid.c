@@ -2852,8 +2852,8 @@ static void grid_size_delaunay(int width, int height,
     int a = delaunay_tilesize(width, height);
 
     *tilesize = a;
-    *xextent = width * a;
-    *yextent = height * a;
+    *xextent = 2*width * a;
+    *yextent = 2*height * a;
 }
 
 /* Check whether the pair of triangles meeting along the edge
@@ -3020,16 +3020,16 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
     int oldnumfaces;
 
     /* Side length */
-    int a = delaunay_tilesize(width, height);
+    int a = 2*delaunay_tilesize(width, height);
 
-    /* Upper bounds - don't have to be exact */
-    int max_dots = width * height + 14;
+    /* Upper bounds - exact but we lose some in the duals */
+    int max_dots = (width+4) * (height+4);
     int max_faces = 2*max_dots-6;
     int max_edges = 3*max_dots-7;
 
     assert(max_dots>3);
 
-    g->tilesize = a;
+    g->tilesize = a/2;
     g->faces = snewn(max_faces+1, grid_face);
     g->dots = snewn(max_dots+1, grid_dot);
     g->edges = snewn(max_edges+1, grid_edge);
@@ -3061,7 +3061,6 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
     g->num_dots = 4;
     g->num_faces = 2;
 
-    /* FIXME: convert to using grid data structures to allow easy navigation */
     for (i=1; g->num_dots<max_dots; i++) {
         int x = (int)(a*width*subrandom(2,i));
         int y = (int)(a*height*subrandom(3,i));
@@ -3187,10 +3186,10 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
 
     grid_make_consistent(g);
     g1 = grid_dual(g);
-    /* grid_free(g); */
-    /* g = grid_dual(g1); */
-    /* grid_free(g); */
-    return g1;
+    grid_free(g);
+    g = grid_dual(g1);
+    grid_free(g1);
+    return g;
 }
 
 /* ----------- End of grid generators ------------- */
