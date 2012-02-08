@@ -2837,6 +2837,7 @@ static grid *grid_new_penrose_p3_thick(int width, int height, char *desc)
 
 /* Delaunay grids */
 
+#define DELAUNAY_SCALE 3
 /* Choose a tilesize so that our integer coordinates are
  * small enough to survive cubing within 32 bits */
 static int delaunay_tilesize(int width, int height)
@@ -2852,8 +2853,40 @@ static void grid_size_delaunay(int width, int height,
     int a = delaunay_tilesize(width, height);
 
     *tilesize = a;
-    *xextent = 2*width * a;
-    *yextent = 2*height * a;
+    *xextent = DELAUNAY_SCALE*width * a;
+    *yextent = DELAUNAY_SCALE*height * a;
+}
+
+#define DELAUNAY_N_PRIMES 4
+int delaunay_primes[DELAUNAY_N_PRIMES] = { 2, 3, 5, 7 };
+#define DELAUNAY_MAX_START_OFFSET 20
+static char *grid_new_desc_delaunay(random_state *rs)
+{
+    int b1, b2, o1, o2;
+    char gd[80];
+
+    o1 = random_upto(rs, DELAUNAY_MAX_START_OFFSET);
+    o2 = random_upto(rs, DELAUNAY_MAX_START_OFFSET);
+    b1 = delaunay_primes[random_upto(rs, DELAUNAY_N_PRIMES)];
+    do {
+        b2 = delaunay_primes[random_upto(rs, DELAUNAY_N_PRIMES)];
+    } while (b2==b1);
+
+    sprintf(gd, "G%do%d,%do%d", b1, o1, b2, o2);
+
+    return dupstr(gd);
+}
+
+static char *grid_validate_desc_delaunay(char *desc)
+{
+    int b1, b2, o1, o2;
+    if (sscanf(desc, "G%do%d,%do%d", &b1, &o1, &b2, &o2) != 4)
+        return "Invalid format grid description string.";
+    if (o1<0 || o2<0)
+        return "Invalid subrandom offset.";
+    if (b1<2 || b2<2 || b1==b2)
+        return "Invalid subrandom bases.";
+    return NULL;
 }
 
 /* Check whether the pair of triangles meeting along the edge
@@ -3018,18 +3051,20 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
     tree234 *queue = newtree234(grid_edge_bydots_cmpfn);
     grid_face *oldfaces;
     int oldnumfaces;
-
+    int b1, b2, o1, o2;
     /* Side length */
-    int a = 2*delaunay_tilesize(width, height);
+    int a = DELAUNAY_SCALE*delaunay_tilesize(width, height);
 
     /* Upper bounds - exact but we lose some in the duals */
     int max_dots = (width+4) * (height+4);
     int max_faces = 2*max_dots-6;
     int max_edges = 3*max_dots-7;
 
+    sscanf(desc, "G%do%d,%do%d", &b1, &o1, &b2, &o2);
+
     assert(max_dots>3);
 
-    g->tilesize = a/2;
+    g->tilesize = a/DELAUNAY_SCALE;
     g->faces = snewn(max_faces+1, grid_face);
     g->dots = snewn(max_dots+1, grid_dot);
     g->edges = snewn(max_edges+1, grid_edge);
@@ -3062,8 +3097,8 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
     g->num_faces = 2;
 
     for (i=1; g->num_dots<max_dots; i++) {
-        int x = (int)(a*width*subrandom(2,i));
-        int y = (int)(a*height*subrandom(3,i));
+        int x = (int)(a*width*subrandom(b1,i+o1));
+        int y = (int)(a*height*subrandom(b2,i+o2));
 
         for (j=0;j<g->num_faces;j++) {
             grid_face*f = &g->faces[j];
@@ -3202,21 +3237,26 @@ static void(*(grid_sizes[]))(int, int, int*, int*, int*) = { GRIDGEN_LIST(FNSZ) 
 
 char *grid_new_desc(grid_type type, int width, int height, int dual, random_state *rs)
 {
-    if (type != GRID_PENROSE_P2 && type != GRID_PENROSE_P3)
+    if (type == GRID_PENROSE_P2 || type == GRID_PENROSE_P3) {
+        return grid_new_desc_penrose(type, width, height, rs);
+    } else if (type == GRID_DELAUNAY) {
+        return grid_new_desc_delaunay(rs);
+    } else {
         return NULL;
-
-    return grid_new_desc_penrose(type, width, height, rs);
+    }
 }
 
 char *grid_validate_desc(grid_type type, int width, int height, int dual, char *desc)
 {
-    if (type != GRID_PENROSE_P2 && type != GRID_PENROSE_P3) {
+    if (type == GRID_PENROSE_P2 || type == GRID_PENROSE_P3) {
+        return grid_validate_desc_penrose(type, width, height, desc);
+    } else if (type == GRID_DELAUNAY) {
+        return grid_validate_desc_delaunay(desc);
+    } else {
         if (desc != NULL)
             return "Grid description strings not used with this grid type";
         return NULL;
     }
-
-    return grid_validate_desc_penrose(type, width, height, desc);
 }
 
 grid *grid_new(grid_type type, int width, int height, int dual, char *desc)
