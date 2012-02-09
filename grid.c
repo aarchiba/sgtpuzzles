@@ -860,6 +860,33 @@ static void grid_make_consistent(grid *g)
     grid_debug_derived(g);
 }
 
+/* Undo grid_make_consistent
+ * The idea is to remove all the extra structures computed by
+ * grid_make_consistent, leaving only the dot list, the face list,
+ * and for each face, the list of dots around its edge, in order.
+ * These are the preconditions for grid_make_consistent, and
+ * this function does not require any of the addiontal information
+ * to be correct.
+ */
+static void grid_make_inconsistent(grid *g)
+{
+    int i;
+
+    for (i=0; i<g->num_dots; i++) {
+        sfree(g->dots[i].faces);
+        g->dots[i].faces = NULL;
+        sfree(g->dots[i].edges);
+        g->dots[i].edges = NULL;
+    }
+    for (i=0; i<g->num_faces; i++) {
+        sfree(g->faces[i].edges);
+        g->faces[i].edges = NULL;
+        g->faces[i].has_incentre = 0;
+    }
+    sfree(g->edges);
+    g->edges = NULL;
+}
+
 /* Helpers for making grid-generation easier.  These functions are only
  * intended for use during grid generation. */
 
@@ -3043,12 +3070,39 @@ static int delaunay_flip_edge(grid*g, grid_edge*e)
     return 1;
 }
 
+static int delaunay_flip_all_edges(grid*g)
+{
+    int i;
+    int flips = 0;
+    tree234 *queue = newtree234(grid_edge_bydots_cmpfn);
+
+    grid_make_consistent(g);
+
+    for (i=0;i<g->num_edges;i++)
+        add234(queue, &g->edges[i]);
+    while (1) {
+        grid_edge *e = delpos234(queue,0);
+        if (!e) break;
+        if (delaunay_flip_edge(g,e)) {
+            flips += 1;
+            for (i=0;i<3;i++) {
+                add234(queue, e->face1->edges[i]);
+                add234(queue, e->face2->edges[i]);
+            }
+            del234(queue,e);
+        }
+    }
+    freetree234(queue);
+
+    grid_make_inconsistent(g);
+    return flips;
+}
+
 static grid *grid_new_delaunay(int width, int height, char *desc)
 {
     int i, j;
     grid *g = grid_empty();
     grid *g1;
-    tree234 *queue = newtree234(grid_edge_bydots_cmpfn);
     grid_face *oldfaces;
     int oldnumfaces;
     int b1, b2, o1, o2;
@@ -3149,73 +3203,41 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
     assert(g->num_faces == max_faces);
     assert(g->num_dots == max_dots);
 
-    grid_make_consistent(g);
+    i = delaunay_flip_all_edges(g);
+    debug(("Flipped %d edges\n", i));
+    /* Remove four corners */
 
-    for (i=0;i<g->num_edges;i++)
-        add234(queue, &g->edges[i]);
-    while (1) {
-        grid_edge *e = delpos234(queue,0);
-        if (!e) break;
-        if (delaunay_flip_edge(g,e)) {
-            for (i=0;i<3;i++) {
-                add234(queue, e->face1->edges[i]);
-                add234(queue, e->face2->edges[i]);
+    /* Remove all faces touching a corner */
+    oldnumfaces = g->num_faces;
+    oldfaces = g->faces;
+
+    g->num_faces = 0;
+    g->faces = snewn(oldnumfaces, grid_face);
+    for (i=0; i<oldnumfaces; i++) {
+        int zap = 0;
+        for (j=0; j<oldfaces[i].order; j++) {
+            if (oldfaces[i].dots[j] - g->dots < 4) {
+                zap = 1;
             }
-            del234(queue,e);
+        }
+        if (zap) {
+            sfree(oldfaces[i].dots);
+            oldfaces[i].dots = NULL;
+        } else {
+            g->faces[g->num_faces] = oldfaces[i];
+            g->num_faces++;
         }
     }
-    freetree234(queue);
+    sfree(oldfaces);
 
-    /* Strip edge and dot structures so we can rerun grid_make_consistent */
+    /* Remove the corner dots */
+    g->num_dots -= 4;
     for (i=0; i<g->num_dots; i++) {
-        sfree(g->dots[i].edges);
-        g->dots[i].edges = NULL;
-        sfree(g->dots[i].faces);
-        g->dots[i].faces = NULL;
+        g->dots[i] = g->dots[i+4];
     }
     for (i=0; i<g->num_faces; i++) {
-        sfree(g->faces[i].edges);
-        g->faces[i].edges = NULL;
-        g->faces[i].has_incentre = 0;
-    }
-    sfree(g->edges);
-    g->edges = NULL;
-
-    if (1) {
-        /* Remove four corners */
-
-        /* Remove all faces touching a corner */
-        oldnumfaces = g->num_faces;
-        oldfaces = g->faces;
-
-        g->num_faces = 0;
-        g->faces = snewn(oldnumfaces, grid_face);
-        for (i=0; i<oldnumfaces; i++) {
-            int zap = 0;
-            for (j=0; j<oldfaces[i].order; j++) {
-                if (oldfaces[i].dots[j] - g->dots < 4) {
-                    zap = 1;
-                }
-            }
-            if (zap) {
-                sfree(oldfaces[i].dots);
-                oldfaces[i].dots = NULL;
-            } else {
-                g->faces[g->num_faces] = oldfaces[i];
-                g->num_faces++;
-            }
-        }
-        sfree(oldfaces);
-
-        /* Remove the corner dots */
-        g->num_dots -= 4;
-        for (i=0; i<g->num_dots; i++) {
-            g->dots[i] = g->dots[i+4];
-        }
-        for (i=0; i<g->num_faces; i++) {
-            for (j=0; j<g->faces[i].order; j++) {
-                g->faces[i].dots[j] -= 4;
-            }
+        for (j=0; j<g->faces[i].order; j++) {
+            g->faces[i].dots[j] -= 4;
         }
     }
 
@@ -3224,6 +3246,12 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
     grid_free(g);
     g = grid_dual(g1);
     grid_free(g1);
+
+    /* Quick last pass to make sure we're really Delaunay */
+    i = delaunay_flip_all_edges(g);
+    debug(("Flipped %d edges\n", i));
+    grid_make_consistent(g);
+
     return g;
 }
 
