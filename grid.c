@@ -92,33 +92,36 @@ static double point_line_distance(long px, long py,
  * clockwise or anticlockwise. Returns positive
  * if yes, negative if no, and zero if they're collinear
  */
-static long anticlockwise(long ax, long ay,
+static long clockwise(long ax, long ay,
                       long bx, long by,
                       long cx, long cy)
 {
-    return bx*cy - cx*by + cx*ay - ax*cy + ax*by - bx*ay;
+    return -(bx*cy - cx*by + cx*ay - ax*cy + ax*by - bx*ay);
 }
 
 /* Determine whether d is in the triangle a, b, c
- * Assumes a, b, c is oriented anticlockwise
+ * Assumes a, b, c is oriented clockwise
  */
 static int in_triangle(long ax, long ay,
                        long bx, long by,
                        long cx, long cy,
                        long dx, long dy) 
 {
-    assert(anticlockwise(ax,ay,bx,by,cx,cy));
-    return anticlockwise(ax,ay,bx,by,dx,dy)>0 &&
-           anticlockwise(bx,by,cx,cy,dx,dy)>0 &&
-           anticlockwise(cx,cy,ax,ay,dx,dy)>0;
+    assert(clockwise(ax,ay,bx,by,cx,cy));
+    return clockwise(ax,ay,bx,by,dx,dy)>0 &&
+           clockwise(bx,by,cx,cy,dx,dy)>0 &&
+           clockwise(cx,cy,ax,ay,dx,dy)>0;
 }
 
 /* Determine whether d is in the circumcircle of points a, b, and c
- * Requires a, b, and c to be in counterclockwise order
+ * Requires a, b, and c to be in clockwise order
  * Returns a positive number iff the result is true.
  *
  * Warning: keep all coordinates smaller than the cube root
  * of MAXINT (fourth root?)
+ *
+ *
+ * FIXME
  */
 static int in_circumcircle(long ax, long ay,
                             long bx, long by,
@@ -126,17 +129,20 @@ static int in_circumcircle(long ax, long ay,
                             long dx, long dy) 
 {
     long a[3][3];
+
+    assert(clockwise(ax,ay,bx,by,cx,cy));
+
     a[0][0] = ax-dx;
     a[0][1] = ay-dy; 
     a[0][2] = (ax-dx)*(ax-dx)+(ay-dy)*(ay-dy);
 
-    a[1][0] = bx-dx;
-    a[1][1] = by-dy; 
-    a[1][2] = (bx-dx)*(bx-dx)+(by-dy)*(by-dy);
+    a[1][0] = cx-dx;
+    a[1][1] = cy-dy; 
+    a[1][2] = (cx-dx)*(cx-dx)+(cy-dy)*(cy-dy);
 
-    a[2][0] = cx-dx;
-    a[2][1] = cy-dy; 
-    a[2][2] = (cx-dx)*(cx-dx)+(cy-dy)*(cy-dy);
+    a[2][0] = bx-dx;
+    a[2][1] = by-dy; 
+    a[2][2] = (bx-dx)*(bx-dx)+(by-dy)*(by-dy);
 
     return (a[0][0]*(a[1][1]*a[2][2]-a[2][1]*a[1][2])
             -a[1][0]*(a[0][1]*a[2][2]-a[2][1]*a[0][2])
@@ -559,6 +565,33 @@ static void grid_trim_vigorously(grid *g)
     sfree(dsf);
     sfree(dots);
     sfree(faces);
+}
+
+static int grid_face_check_orientation(grid_face*f)
+{
+    int i;
+
+    for (i=0;i<f->order;i++) {
+        if (clockwise(f->dots[i]->x,f->dots[i]->y,
+                      f->dots[(i+1)%f->order]->x,
+                        f->dots[(i+1)%f->order]->y,
+                      f->dots[(i+2)%f->order]->x,
+                        f->dots[(i+2)%f->order]->y)<=0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int grid_check_orientation(grid*g)
+{
+    int i;
+
+    for (i=0;i<g->num_faces;i++) {
+        if (!grid_face_check_orientation(&g->faces[i])) 
+            return 0;
+    }
+    return 1;
 }
 
 /* Input: grid has its dots and faces initialised:
@@ -1531,6 +1564,7 @@ static grid *grid_dual(grid *g)
                 new_g->num_faces,new_g->num_dots));
     grid_trim_vigorously(new_g);
     grid_make_consistent(new_g);
+
     return new_g;
 }
 /* ------ Generate various types of grid ------ */
@@ -2952,9 +2986,9 @@ static int delaunay_flip_edge(grid*g, grid_edge*e)
 
     /* Arrange ABCD anticlockwise and with AC as the edge */
     /* Also, B is on e->face1 */
-    if (anticlockwise(a->x,a->y,
-                      b->x,b->y,
-                      c->x,c->y)<0) {
+    if (clockwise(a->x,a->y,
+                  b->x,b->y,
+                  c->x,c->y)<0) {
         grid_dot *t;
         grid_face *tf;
         t=b; b=d; d=t;
@@ -2962,12 +2996,12 @@ static int delaunay_flip_edge(grid*g, grid_edge*e)
     }
 
     /* FIXME: make sure these really are in the right order */
-    assert(anticlockwise(a->x,a->y,
-                         b->x,b->y,
-                         c->x,c->y)>0);
-    assert(anticlockwise(a->x,a->y,
-                         c->x,c->y,
-                         d->x,d->y)>0);
+    assert(clockwise(a->x,a->y,
+                     b->x,b->y,
+                     c->x,c->y)>0);
+    assert(clockwise(a->x,a->y,
+                     c->x,c->y,
+                     d->x,d->y)>0);
 
     /* Does the edge need to be flipped? */
     if (!(in_circumcircle(a->x, a->y,
@@ -2980,12 +3014,12 @@ static int delaunay_flip_edge(grid*g, grid_edge*e)
                           b->x, b->y)))
         return 0;
     /* If flipping is needed, then ABCD must be convex */
-    assert(anticlockwise(b->x,b->y,
-                         c->x,c->y,
-                         d->x,d->y)>0);
-    assert(anticlockwise(c->x,c->y,
-                         d->x,d->y,
-                         a->x,a->y)>0);
+    assert(clockwise(b->x,b->y,
+                     c->x,c->y,
+                     d->x,d->y)>0);
+    assert(clockwise(c->x,c->y,
+                     d->x,d->y,
+                     a->x,a->y)>0);
 
     /* Make sure that the faces we're modifying are always face1 */
     for (i=0;i<6;i++) {
@@ -3129,12 +3163,12 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
      */
     g->dots[0].x = 0;
     g->dots[0].y = 0;
-    g->dots[1].x = a*width*1;
-    g->dots[1].y = 0;
+    g->dots[1].x = 0;
+    g->dots[1].y = a*height*1;
     g->dots[2].x = a*width*1;
     g->dots[2].y = a*height*1;
-    g->dots[3].x = 0;
-    g->dots[3].y = a*height*1;
+    g->dots[3].x = a*width*1;
+    g->dots[3].y = 0;
 
     g->faces[0].order = 3;
     g->faces[0].dots = snewn(3,grid_dot*);
@@ -3149,6 +3183,8 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
 
     g->num_dots = 4;
     g->num_faces = 2;
+
+    assert(grid_check_orientation(g));
 
     for (i=1; g->num_dots<max_dots; i++) {
         int x = (int)(a*width*subrandom(b1,i+o1));
@@ -3246,6 +3282,8 @@ static grid *grid_new_delaunay(int width, int height, char *desc)
     grid_free(g);
     g = grid_dual(g1);
     grid_free(g1);
+
+    assert(grid_check_orientation(g));
 
     /* Quick last pass to make sure we're really Delaunay */
     i = delaunay_flip_all_edges(g);
